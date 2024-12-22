@@ -245,6 +245,29 @@ class Simulation:
             Body(mass = 5.15e-5, position=[30.1, 0], velocity=[0, np.sqrt(1/30.1)]) # neptune
         ]
 
+    # central_mass is mass of large central object
+    # num_bodies and ranges refer to smaller orbiting bodies
+    def generate_circular_orbits(self, num_bodies, mass_range, position_range, central_mass):
+
+        # Initialize list of bodies
+        self.bodies = []
+
+        # Append central mass to list
+        self.bodies.append(Body(mass = central_mass, position = [0, 0], velocity = [0, 0]))
+
+        # Generate orbiting bodies
+        masses = np.random.uniform(mass_range[0], mass_range[1], num_bodies)
+        positions = np.random.uniform(position_range[0], position_range[1], (num_bodies, 2))
+        
+        for i in range(num_bodies):
+            angle = np.arctan2(positions[i][1], positions[i][0]) # Angle of position vector from x-axis
+            radius = np.linalg.norm(positions[i]) # Orbital radius
+            v_mag = np.sqrt(central_mass / radius) # Magnitude of orbital velocity
+            vx = v_mag * (-np.sin(angle)) # x-component of orbital velocity
+            vy = v_mag * np.cos(angle) # y-component of orbital velocity
+            v = np.array([vx, vy]) # Orbital velocity
+            self.bodies.append(Body(masses[i], positions[i], v)) # Append body to list
+
     # function to run simulation and store output in matrix
     def run_sim(self):
         
@@ -322,6 +345,7 @@ class Simulation:
         from matplotlib.animation import FuncAnimation
         from matplotlib.patches import Rectangle
         from matplotlib import colormaps
+        from matplotlib.colors import Normalize
 
         fps = 30
 
@@ -341,8 +365,14 @@ class Simulation:
         # Sizes
         sizes = [50*body.mass**(1/3) for body in self.bodies]
 
+        # Colors
+        colors = []
+        colors.append('darkcyan')
+        for i in range(num_bodies - 1):
+            colors.append('cyan')
+
         # Initialize points
-        points = ax.scatter([0] * num_bodies, [0] * num_bodies, s=sizes, c='yellow')
+        points = ax.scatter([0] * num_bodies, [0] * num_bodies, s=sizes, c=colors)
 
         # Scatter plot for quadtree node centers
         #node_points = ax.scatter([], [], s=20, c='cyan', label="Quadtree Nodes")
@@ -373,7 +403,7 @@ class Simulation:
                 rect = Rectangle(
                     (x - size / 2, y - size / 2),  # Bottom-left corner
                     size, size,  # Width and height
-                    linewidth=1,
+                    linewidth=0.5,
                     edgecolor='white',
                     facecolor='none'
                 )
