@@ -13,7 +13,7 @@ class Body:
     def calculate_force(self, pos, mass):
 
         G = 1 # gravitational constant
-        soft = 0.35 # softening parameter
+        soft = 0.025 # softening parameter
 
         # displacement vector from self to other_body
         r = pos - self.position 
@@ -344,8 +344,6 @@ class Simulation:
         import matplotlib.pyplot as plt
         from matplotlib.animation import FuncAnimation
         from matplotlib.patches import Rectangle
-        from matplotlib import colormaps
-        from matplotlib.colors import Normalize
 
         fps = 30
 
@@ -363,7 +361,7 @@ class Simulation:
         fig.patch.set_facecolor("lightgray")  # Outside the plot
 
         # Sizes
-        sizes = [50*body.mass**(1/3) for body in self.bodies]
+        sizes = [20*body.mass**(1/3) for body in self.bodies]
 
         # Colors
         colors = []
@@ -423,3 +421,187 @@ class Simulation:
         plt.close(fig)  # Close the figure to free resources
 
         return
+
+    # Direct force simulation
+    def run_direct_sim(self):
+
+        G = 1
+        soft = 0.1
+
+        # Simulation time steps
+        time_steps = np.arange(0, self.num_frames * self.dt, self.dt)
+
+        # Initialize matrix to store position data
+        self.data = np.zeros((len(time_steps), len(self.bodies), 2))
+
+        for time_index, time in enumerate(time_steps):
+            for i, body_i in enumerate(self.bodies):
+                for j in range(i + 1, len(self.bodies)): # avoid redundant force calculations
+
+                    # displacement vector from body_i to body_j
+                    r_ji = self.bodies[j].position - self.bodies[i].position 
+                    # force vector on body_i from body_j
+                    F_ij = (G * self.bodies[i].mass * self.bodies[j].mass * r_ji) / ((np.linalg.norm(r_ji)**2 + soft**2)**(3/2))
+                    self.bodies[i].force = self.bodies[i].force + F_ij # calculate net force on body_i
+                    self.bodies[j].force = self.bodies[j].force - F_ij # calculate net force on body_j
+
+                self.bodies[i].velocity += (self.bodies[i].force / self.bodies[i].mass) * self.dt
+                self.bodies[i].position += self.bodies[i].velocity * self.dt
+                self.bodies[i].force = np.array([0, 0])
+                self.data[time_index, i] = self.bodies[i].position
+
+    # Generate video of direct sim
+    def save_direct_animation(self, filename = 'simulation.mp4'):
+        
+        import matplotlib.pyplot as plt
+        from matplotlib.animation import FuncAnimation
+
+        fps = 30
+
+        num_frames = self.data.shape[0]
+        num_bodies = self.data.shape[1]
+
+        # Set up the figure
+        fig, ax = plt.subplots(figsize=(19.2, 10.8), dpi = 100)
+        ax.set_xlim(self.simsize * -0.5, self.simsize * 0.5)
+        ax.set_ylim(self.simsize * -0.5, self.simsize * 0.5)
+        ax.set_title(f'{len(self.bodies)} Body Barnes-Hut Simulation')
+        ax.set_xlabel('X Position')
+        ax.set_ylabel('Y Position')
+        ax.set_facecolor("black")  # Set background color
+        fig.patch.set_facecolor("lightgray")  # Outside the plot
+        ax.grid(color = 'gray', linestyle = '--', linewidth = 0.5, alpha = 1)
+
+        # Sizes
+        sizes = [50*body.mass**(1/3) for body in self.bodies]
+
+        # Colors
+        colors = []
+        colors.append('darkcyan')
+        for i in range(num_bodies - 1):
+            colors.append('cyan')
+
+        # Initialize points
+        points = ax.scatter([0] * num_bodies, [0] * num_bodies, s=sizes, c=colors)
+
+        # Update function for animation
+        def update(frame):
+
+            # Update body positions
+            positions = self.data[frame]
+            points.set_offsets(positions)
+
+            return points
+
+        # Create the animation
+        ani = FuncAnimation(fig, update, frames=num_frames)
+
+        # Save the animation
+        ani.save(filename, fps=fps, writer="ffmpeg")
+        print(f"Animation saved to {filename}")
+
+        plt.close(fig)  # Close the figure to free resources
+
+        return
+
+    # Save Barnes-Hut animation using multiprocessing
+    def mp_save_animation(self, filename = 'simulation.mp4'):
+
+        from multiprocessing import Pool
+        import subprocess
+        from multiprocessing import Pool
+        import os
+
+        # Ensure 'temp' directory exists
+        os.makedirs('temp', exist_ok=True)
+
+        fps = 30
+        num_frames = self.data.shape[0]
+        num_bodies = self.data.shape[1]
+
+        # Sizes and colors
+        sizes = [50 * body.mass**(1 / 3) for body in self.bodies]
+        colors = ['darkcyan'] + ['cyan'] * (num_bodies - 1)
+        
+        # Divide frames into batches
+        batch_size = 100
+        frame_batches = [range(i, min(i + batch_size, num_frames)) for i in range(0, num_frames, batch_size)]
+
+        for batch_index, frame_batch in enumerate(frame_batches):
+            print(f"Rendering batch {batch_index + 1}/{len(frame_batches)}...")
+
+            # Prepare arguments for multiprocessing
+            args = [
+                (frame, self.data, self.node_positions, self.node_sizes, self.simsize, sizes, colors)
+                for frame in frame_batch
+            ]
+
+            # Render frames in parallel
+            with Pool() as pool:
+                pool.map(render_frame, args)
+
+        # Combine frames into a video using FFmpeg
+        print("Combining frames into video...")
+        ffmpeg_cmd = [
+            "ffmpeg",
+            "-y",  # Overwrite output file if it exists
+            "-r", str(fps),  # Set frame rate
+            "-i", "temp/frame_%04d.png",  # Input frame pattern
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            filename,
+        ]
+        # Redirect stdout and stderr to suppress verbose output
+        with open(os.devnull, 'w') as devnull:
+            subprocess.run(ffmpeg_cmd, stdout=devnull, stderr=devnull)
+        
+        # Clean up frame images
+        print("Cleaning up frames...")
+        for frame in range(num_frames):
+            frame_file = f"temp/frame_{frame:04d}.png"
+            if os.path.exists(frame_file):
+                os.remove(frame_file)
+
+        # Remove the temp folder
+        os.rmdir('temp')
+
+        print(f"Animation saved to {filename}")
+
+# worker function to render a single frame
+def render_frame(args):
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import Rectangle
+
+        frame, data, node_positions, node_sizes, simsize, sizes, colors = args
+
+        fig, ax = plt.subplots(figsize=(19.2, 10.8), dpi=100)
+        ax.set_xlim(simsize * -0.5, simsize * 0.5)
+        ax.set_ylim(simsize * -0.5, simsize * 0.5)
+        ax.set_title(f'{len(sizes)} Body Barnes-Hut Simulation')
+        ax.set_xlabel('X Position')
+        ax.set_ylabel('Y Position')
+        ax.set_facecolor("black")  # Set background color
+        fig.patch.set_facecolor("lightgray")  # Outside the plot
+
+        # Plot bodies
+        positions = data[frame]
+        ax.scatter(positions[:, 0], positions[:, 1], s=sizes, c=colors)
+
+        # Add rectangles for quadtree nodes
+        for pos, size in zip(node_positions[frame], node_sizes[frame]):
+            x, y = pos
+            rect = Rectangle(
+                (x - size / 2, y - size / 2),  # Bottom-left corner
+                size, size,  # Width and height
+                linewidth=0.5,
+                edgecolor='white',
+                facecolor='none'
+            )
+            ax.add_patch(rect)
+
+        # Save the frame as an image
+        frame_filename = f"temp/frame_{frame:04d}.png"
+        plt.savefig(frame_filename, dpi=100)
+        plt.close(fig)
+        return frame_filename
+            
